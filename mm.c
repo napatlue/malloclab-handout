@@ -78,15 +78,15 @@ static char *free_listp = 0;  /* Pointer to first free block */
 
 
 /* Function prototypes for internal helper routines */
-static inline void *extend_heap(size_t words);
-static inline void place(void *bp, size_t asize);
-static inline void *find_fit(size_t asize);
-static inline void *coalesce(void *bp);
-static inline void print_block(void *bp);
-static inline void check_heap(int verbose);
-static inline void check_block(void *bp);
-static inline void insert_free_block(void *bp);
-static inline void remove_free_block(void *bp);
+static void *extend_heap(size_t words);
+static void place(void *bp, size_t asize);
+static void *find_fit(size_t asize);
+static void *coalesce(void *bp);
+static void print_block(void *bp);
+static void check_heap(int verbose);
+static void check_block(void *bp);
+static void insert_free_block(void *bp);
+static void remove_free_block(void *bp);
 
 
 /*
@@ -124,20 +124,24 @@ void *malloc (size_t size) {
     size_t extendsize; /* Amount to extend heap if no fit */
     char *bp;
     
-    /* $end mmmalloc */
-    if (heap_listp == 0){
+    if (free_listp == 0){ // instantiate free list
         mm_init();
     }
     /* $begin mmmalloc */
     /* Ignore spurious requests */
-    if (size == 0)
+    if (size <= 0)
         return NULL;
     
     /* Adjust block size to include overhead and alignment reqs. */
-    if (size <= DSIZE)                                          
+    asize = MAX(ALIGN(size) + DSIZE, MINIMUM);
+    
+    /* comment out adjust from implicit version
+    if (size <= DSIZE)
         asize = 2*DSIZE;                                        
     else
         asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE); 
+    */
+    
     
     /* Search the free list for a fit */
     if ((bp = find_fit(asize)) != NULL) {  
@@ -150,7 +154,7 @@ void *malloc (size_t size) {
     if ((bp = extend_heap(extendsize/WSIZE)) == NULL)
         return NULL;                                  
     place(bp, asize);
-    mm_checkheap(1);
+    //mm_checkheap(1);
     return bp;
 }
 
@@ -165,7 +169,7 @@ void free (void *ptr) {
     /* $begin mmfree */
     size_t size = GET_SIZE(HDRP(ptr));
     /* $end mmfree */
-    if (heap_listp == 0){
+    if (free_listp == 0){
         mm_init();
     }
     /* $begin mmfree */
@@ -177,34 +181,42 @@ void free (void *ptr) {
 
 static void *coalesce(void *bp)
 {
-    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
+    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp))) || PREV_BLKP(bp) == bp;
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size_t size = GET_SIZE(HDRP(bp));
     
-    if (prev_alloc && next_alloc) {            /* Case 1 */
-        return bp;
-    }
+	/* Case 1, extend the block leftward */
+	if (prev_alloc && !next_alloc)
+	{
+		size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
+		remove_free_block(NEXT_BLKP(bp));
+		PUT(HDRP(bp), PACK(size, 0));
+		PUT(FTRP(bp), PACK(size, 0));
+	}
     
-    else if (prev_alloc && !next_alloc) {      /* Case 2 */
-        size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
-        PUT(HDRP(bp), PACK(size, 0));
-        PUT(FTRP(bp), PACK(size,0));
-    }
+	/* Case 2, extend the block rightward */
+	else if (!prev_alloc && next_alloc)
+	{
+		size += GET_SIZE(HDRP(PREV_BLKP(bp)));
+		bp = PREV_BLKP(bp);
+		remove_free_block(bp);
+		PUT(HDRP(bp), PACK(size, 0));
+		PUT(FTRP(bp), PACK(size, 0));
+	}
     
-    else if (!prev_alloc && next_alloc) {      /* Case 3 */
-        size += GET_SIZE(HDRP(PREV_BLKP(bp)));
-        PUT(FTRP(bp), PACK(size, 0));
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-        bp = PREV_BLKP(bp);
-    }
+	/* Case 3, extend the block in both directions */
+	else if (!prev_alloc && !next_alloc)
+	{
+		size += GET_SIZE(HDRP(PREV_BLKP(bp))) +
+        GET_SIZE(HDRP(NEXT_BLKP(bp)));
+		remove_free_block(PREV_BLKP(bp));
+		remove_free_block(NEXT_BLKP(bp));
+		bp = PREV_BLKP(bp);
+		PUT(HDRP(bp), PACK(size, 0));
+		PUT(FTRP(bp), PACK(size, 0));
+	}
     
-    else {                                     /* Case 4 */
-        size += GET_SIZE(HDRP(PREV_BLKP(bp))) +
-	    GET_SIZE(FTRP(NEXT_BLKP(bp)));
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-        PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
-        bp = PREV_BLKP(bp);
-    }
+	insert_free_block(bp);
 
     /* $begin mmfree */
     return bp;
@@ -216,10 +228,11 @@ static void *coalesce(void *bp)
 void *realloc(void *oldptr, size_t size) {
     size_t oldsize;
     void *newptr;
+    size_t asize = MAX(ALIGN(size) + DSIZE, MINIMUM);
     
     /* If size == 0 then this is just free, and we return NULL. */
     if(size == 0) {
-        mm_free(oldptr);
+        free(oldptr);
         return 0;
     }
     
@@ -228,20 +241,44 @@ void *realloc(void *oldptr, size_t size) {
         return mm_malloc(size);
     }
     
-    newptr = mm_malloc(size);
+    /* Get the size of the original block */
+	oldsize = GET_SIZE(HDRP(oldptr));
     
-    /* If realloc() fails the original block is left untouched  */
-    if(!newptr) {
-        return 0;
-    }
+	/* If the size doesn't need to be changed, return orig pointer */
+	if (asize == oldsize)
+		return oldptr;
     
-    /* Copy the old data. */
-    oldsize = GET_SIZE(HDRP(oldptr));
-    if(size < oldsize) oldsize = size;
-    memcpy(newptr, oldptr, oldsize);
+	/* If the size needs to be decreased, shrink the block and
+	 * return the same pointer */
+	if(asize <= oldsize)
+	{
+		size = asize;
+        
+		/* If a new block couldn't fit in the remaining space,
+		 * return the pointer */
+		if(oldsize - size <= MINIMUM)
+			return oldptr;
+		PUT(HDRP(oldptr), PACK(size, 1));
+		PUT(FTRP(oldptr), PACK(size, 1));
+		PUT(HDRP(NEXT_BLKP(oldptr)), PACK(oldsize-size, 1));
+		free(NEXT_BLKP(oldptr));
+		return oldptr;
+	}
     
-    /* Free the old block. */
-    mm_free(oldptr);
+	newptr = malloc(size);
+    
+	/* If realloc() fails the original block is left untouched  */
+	if(!newptr) {
+		return 0;
+	}
+    
+	/* Copy the old data. */
+	if(size < oldsize) oldsize = size;
+	memcpy(newptr, oldptr, oldsize);
+    
+	/* Free the old block. */
+	free(oldptr);
+
     
     return newptr;
 }
@@ -262,6 +299,10 @@ static void *extend_heap(size_t words)
     
     /* Allocate an even number of words to maintain alignment */
     size = (words % 2) ? (words+1) * WSIZE : words * WSIZE; 
+    
+    if(size < MINIMUM)
+        size = MINIMUM;
+    
     if ((long)(bp = mem_sbrk(size)) == -1)
         return NULL;                                        
     
@@ -285,16 +326,22 @@ static void place(void *bp, size_t asize)
 {
     size_t csize = GET_SIZE(HDRP(bp));
     
-    if ((csize - asize) >= (2*DSIZE)) {
+    if ((csize - asize) >= MINIMUM) {
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
+        
+        remove_free_block(bp);
+        
         bp = NEXT_BLKP(bp);
         PUT(HDRP(bp), PACK(csize-asize, 0));
         PUT(FTRP(bp), PACK(csize-asize, 0));
+        coalesce(bp);
     }
     else {
         PUT(HDRP(bp), PACK(csize, 1));
         PUT(FTRP(bp), PACK(csize, 1));
+        
+        remove_free_block(bp);
     }
 }
 
@@ -308,8 +355,8 @@ static void *find_fit(size_t asize)
     /* First fit search */
     void *bp;
     
-    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
-        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+    for (bp = free_listp; GET_ALLOC(HDRP(bp)) == 0; bp = NEXT_FREEP(bp)) {
+        if (asize <= GET_SIZE(HDRP(bp))) {
             return bp;
         }
     }
@@ -333,68 +380,37 @@ void *calloc (size_t nmemb, size_t size) {
     return newptr;
 }
 
-static void printblock(void *bp)
+static inline void remove_free_block(void *bp)
 {
-    size_t hsize, halloc, fsize, falloc;
-    
-    //checkheap(0);
-    hsize = GET_SIZE(HDRP(bp));
-    halloc = GET_ALLOC(HDRP(bp));
-    fsize = GET_SIZE(FTRP(bp));
-    falloc = GET_ALLOC(FTRP(bp));
-    
-    if (hsize == 0) {
-        printf("%p: EOL\n", bp);
-        return;
-    }
-     /* if it's allcoated bolck, print only header and footer info, otherwise including prev and next info*/
-    
-    if (halloc) {
-        printf("%p: header: [%p:%c] footer: [%p:%c]\n", bp,
-        hsize, (halloc ? 'a' : 'f'),
-        fsize, (falloc ? 'a' : 'f'));
-    }
-    else{
-        printf("%p: header: [%p:%c] prev:%p next:%p footer: [%p:%c]\n", bp,
-        hsize, (halloc ? 'a' : 'f'),
-        
-        fsize, (falloc ? 'a' : 'f'));
-    }
-}
-
-static void checkblock(void *bp)
-{
-    if ((size_t)bp % 8)
-        printf("Error: %p is not doubleword aligned\n", bp);
-    if (GET(HDRP(bp)) != GET(FTRP(bp)))
-        printf("Error: header does not match footer\n");
+    /* If there's a previous block, set its next pointer to the
+	 * next block.
+	 * If not, set the block's previous pointer to the prev block.
+     */
+	if (PREV_FREEP(bp))
+    {
+		NEXT_FREEP(PREV_FREEP(bp)) = NEXT_FREEP(bp);
+	}
+    else
+    {
+		free_listp = NEXT_FREEP(bp);
+	}
+    PREV_FREEP(NEXT_FREEP(bp)) = PREV_FREEP(bp);
 }
 
 /*
- * checkheap - Minimal check of the heap for consistency
+ * insertAtFront - Inserts a block at the front of the free list
+ * This function takes a block pointer of the block to add to the
+ * free list as a parameter.
  */
-void checkheap(int verbose)
+static void insert_free_block(void *bp)
 {
-    char *bp = heap_listp;
-    
-    if (verbose)
-        printf("Heap (%p):\n", heap_listp);
-    
-    if ((GET_SIZE(HDRP(heap_listp)) != DSIZE) || !GET_ALLOC(HDRP(heap_listp)))
-        printf("Bad prologue header\n");
-    checkblock(heap_listp);
-    
-    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
-        if (verbose)
-            printblock(bp);
-        checkblock(bp);
-    }
-    
-    if (verbose)
-        printblock(bp);
-    if ((GET_SIZE(HDRP(bp)) != 0) || !(GET_ALLOC(HDRP(bp))))
-        printf("Bad epilogue header\n");
+	NEXT_FREEP(bp) = free_listp; //Sets next ptr to start of free list
+	PREV_FREEP(free_listp) = bp; //Sets current's prev to new block
+	PREV_FREEP(bp) = NULL; // Sets prev pointer to NULL
+	free_listp = bp; // Sets start of free list as new block
 }
+
+
 /*
  * Return whether the pointer is in the heap.
  * May be useful for debugging.
@@ -411,9 +427,77 @@ static int aligned(const void *p) {
     return (size_t)ALIGN(p) == (size_t)p;
 }
 
+static void print_block(void *bp)
+{
+    int hsize, halloc, fsize, falloc;
+    
+    //checkheap(0);
+    hsize = GET_SIZE(HDRP(bp));
+    halloc = GET_ALLOC(HDRP(bp));
+    fsize = GET_SIZE(FTRP(bp));
+    falloc = GET_ALLOC(FTRP(bp));
+    
+    if (hsize == 0) {
+        printf("%p: EOL\n", bp);
+        return;
+    }
+     /* if it's allcoated bolck, print only header and footer info, otherwise including prev and next info*/
+    
+    if (halloc) {
+        printf("%p: header: [%d:%c] footer: [%d:%c]\n", bp,
+        hsize, (halloc ? 'a' : 'f'),
+        fsize, (falloc ? 'a' : 'f'));
+    }
+    else{
+        printf("%p: header: [%d:%c] prev:%p next:%p footer: [%d:%c]\n", bp,
+        hsize, (halloc ? 'a' : 'f'),
+        PREV_FREEP(bp),
+        NEXT_FREEP(bp),
+        fsize, (falloc ? 'a' : 'f'));
+    }
+}
+
+static void check_block(void *bp)
+{
+    if (!in_heap(bp))
+        printf("Error: %p is not in heap\n", bp);
+    if (!aligned(bp))
+        printf("Error: %p is not doubleword aligned\n", bp);
+    if (GET(HDRP(bp)) != GET(FTRP(bp)))
+        printf("Error: header does not match footer\n");
+    
+}
+
+/*
+ * checkheap - Minimal check of the heap for consistency
+ */
+void check_heap(int verbose)
+{
+    char *bp = heap_listp;
+    
+    if (verbose)
+        printf("Heap (%p):\n", heap_listp);
+    
+    if ((GET_SIZE(HDRP(heap_listp)) != MINIMUM) || !GET_ALLOC(HDRP(heap_listp)))
+        printf("Bad prologue header\n");
+    check_block(heap_listp);
+    
+    for (bp = free_listp; GET_ALLOC(HDRP(bp)) == 0; bp = NEXT_FREEP(bp)) {
+        if (verbose)
+            print_block(bp);
+        check_block(bp);
+    }
+    
+    if (verbose)
+        print_block(bp);
+    if ((GET_SIZE(HDRP(bp)) != 0) || !(GET_ALLOC(HDRP(bp))))
+        printf("Bad epilogue header\n");
+}
+
+
 /*
  * mm_checkheap
  */
 void mm_checkheap(int verbose) {
-    checkheap(verbose);
+    check_heap(verbose);
 }
