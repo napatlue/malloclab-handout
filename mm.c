@@ -1,7 +1,8 @@
 /*
  * mm.c
  *
- * NOTE TO STUDENTS: Replace this header comment with your own header
+ * Napat Luevisadpaibul
+ * ID:nluevisa
  * comment that gives a high level description of your solution.
  */
 #include <assert.h>
@@ -39,12 +40,11 @@
 #define ALIGN(p) (((size_t)(p) + (ALIGNMENT-1)) & ~0x7)
 
 
-
-/* $begin mallocmacros */
 /* Basic constants and macros */
 #define WSIZE       4       /* Word and header/footer size (bytes) */ 
 #define DSIZE       8       /* Doubleword size (bytes) */
-#define CHUNKSIZE  (1<<12)  /* Extend heap by this amount (bytes) */  
+#define CHUNKSIZE  (1<<12)  /* Extend heap by this amount (bytes) */
+#define MINIMUM     24      /* Minimum block size */
 
 #define MAX(x, y) ((x) > (y)? (x) : (y))
 
@@ -66,34 +66,49 @@
 /* Given block ptr bp, compute address of next and previous blocks */
 #define NEXT_BLKP(bp)  ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE))) 
 #define PREV_BLKP(bp)  ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE))) 
-/* $end mallocmacros */
+
+/* Given free block ptr bp, compute address of next and previous free blocks */
+#define PREV_FREEP(bp)  (*(char **)(bp))
+#define NEXT_FREEP(bp)  (*(char **)(bp + DSIZE)) // possible change to WSIZE
+
 
 /* Global variables */
 static char *heap_listp = 0;  /* Pointer to first block */
+static char *free_listp = 0;  /* Pointer to first free block */
 
 
 /* Function prototypes for internal helper routines */
-static void *extend_heap(size_t words);
-static void place(void *bp, size_t asize);
-static void *find_fit(size_t asize);
-static void *coalesce(void *bp);
-static void printblock(void *bp);
-static void checkheap(int verbose);
-static void checkblock(void *bp);
+static inline void *extend_heap(size_t words);
+static inline void place(void *bp, size_t asize);
+static inline void *find_fit(size_t asize);
+static inline void *coalesce(void *bp);
+static inline void print_block(void *bp);
+static inline void check_heap(int verbose);
+static inline void check_block(void *bp);
+static inline void insert_free_block(void *bp);
+static inline void remove_free_block(void *bp);
+
 
 /*
  * Initialize: return -1 on error, 0 on success.
  */
 int mm_init(void) {
     /* Create the initial empty heap */
-    if ((heap_listp = mem_sbrk(4*WSIZE)) == (void *)-1) //line:vm:mm:begininit
+    if ((heap_listp = mem_sbrk(2*MINIMUM)) == (void *)-1)
         return -1;
     PUT(heap_listp, 0);                          /* Alignment padding */
-    PUT(heap_listp + (1*WSIZE), PACK(DSIZE, 1)); /* Prologue header */
-    PUT(heap_listp + (2*WSIZE), PACK(DSIZE, 1)); /* Prologue footer */
-    PUT(heap_listp + (3*WSIZE), PACK(0, 1));     /* Epilogue header */
-    heap_listp += (2*WSIZE);                    
-
+    
+    
+    PUT(heap_listp + WSIZE, PACK(MINIMUM, 1));   /* Prolog Header */
+    PUT(heap_listp + DSIZE, 0);                  /* Prev pointer */
+    PUT(heap_listp + DSIZE + WSIZE, 0);          /* Next pointer */
+    PUT(heap_listp + MINIMUM, PACK(MINIMUM, 1)); /* Prologue footer */
+    
+    
+    PUT(heap_listp + WSIZE + MINIMUM, PACK(0, 1));     /* Epilogue header */
+    
+    //heap_listp += (2*WSIZE);
+    free_listp = heap_listp + (2*WSIZE);
     
     /* Extend the empty heap with a free block of CHUNKSIZE bytes */
     if (extend_heap(CHUNKSIZE/WSIZE) == NULL)
@@ -332,10 +347,19 @@ static void printblock(void *bp)
         printf("%p: EOL\n", bp);
         return;
     }
+     /* if it's allcoated bolck, print only header and footer info, otherwise including prev and next info*/
     
-    /*  printf("%p: header: [%p:%c] footer: [%p:%c]\n", bp,
-     hsize, (halloc ? 'a' : 'f'),
-     fsize, (falloc ? 'a' : 'f')); */
+    if (halloc) {
+        printf("%p: header: [%p:%c] footer: [%p:%c]\n", bp,
+        hsize, (halloc ? 'a' : 'f'),
+        fsize, (falloc ? 'a' : 'f'));
+    }
+    else{
+        printf("%p: header: [%p:%c] prev:%p next:%p footer: [%p:%c]\n", bp,
+        hsize, (halloc ? 'a' : 'f'),
+        
+        fsize, (falloc ? 'a' : 'f'));
+    }
 }
 
 static void checkblock(void *bp)
@@ -375,17 +399,17 @@ void checkheap(int verbose)
  * Return whether the pointer is in the heap.
  * May be useful for debugging.
  */
-//static int in_heap(const void *p) {
-//    return p <= mem_heap_hi() && p >= mem_heap_lo();
-//}
+static int in_heap(const void *p) {
+    return p <= mem_heap_hi() && p >= mem_heap_lo();
+}
 
 /*
  * Return whether the pointer is aligned.
  * May be useful for debugging.
  */
-//static int aligned(const void *p) {
-//    return (size_t)ALIGN(p) == (size_t)p;
-//}
+static int aligned(const void *p) {
+    return (size_t)ALIGN(p) == (size_t)p;
+}
 
 /*
  * mm_checkheap
