@@ -3,7 +3,7 @@
  *
  * Napat Luevisadpaibul
  * ID:nluevisa
- * This solution uses explicit free list. Allcoate block consists of header and foother.
+ * This solution uses explicit free list. Allcoate block consists of header and footer.
  * Free block consist of header, pointer to previosl free block, pointer to next free block and footer.
  */
 #include <assert.h>
@@ -79,15 +79,15 @@ static char *free_listp = 0;  /* Pointer to first free block */
 
 
 /* Function prototypes for internal helper routines */
-static void *extend_heap(size_t words);
-static void place(void *bp, size_t asize);
-static void *find_fit(size_t asize);
-static void *coalesce(void *bp);
+static inline void *extend_heap(size_t words);
+static inline void place(void *bp, size_t asize);
+static inline void *find_fit(size_t asize);
+static inline void *coalesce(void *bp);
 static void print_block(void *bp);
 static void check_heap(int verbose);
 static void check_block(void *bp);
-static void insert_free_block(void *bp);
-static void remove_free_block(void *bp);
+static inline void insert_free_block(void *bp);
+static inline void remove_free_block(void *bp);
 
 
 /*
@@ -182,7 +182,7 @@ void free (void *ptr) {
     //mm_checkheap(1);
 }
 
-static void *coalesce(void *bp)
+static inline void *coalesce(void *bp)
 {
     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp))) || PREV_BLKP(bp) == bp; //possible to remove second clause
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
@@ -296,7 +296,7 @@ void *realloc(void *oldptr, size_t size) {
 /*
  * extend_heap - Extend heap with free block and return its block pointer
  */
-static void *extend_heap(size_t words)
+static inline void *extend_heap(size_t words)
 {
     char *bp;
     size_t size;
@@ -324,7 +324,7 @@ static void *extend_heap(size_t words)
  * Then split if remainder is at least a minimum block size
  */
 
-static void place(void *bp, size_t asize)
+static inline void place(void *bp, size_t asize)
 {
     size_t csize = GET_SIZE(HDRP(bp));
     
@@ -347,7 +347,7 @@ static void place(void *bp, size_t asize)
     }
 }
 
-static void *find_fit(size_t asize)
+static inline void *find_fit(size_t asize)
 {
 
     /* First fit search */
@@ -399,7 +399,7 @@ static inline void remove_free_block(void *bp)
 /*
  * Inserts a block at the beginning of the free list
  */
-static void insert_free_block(void *bp)
+static inline void insert_free_block(void *bp)
 {
 	NEXT_FREEP(bp) = free_listp; //Sets next ptr to start of free list
 	PREV_FREEP(free_listp) = bp; //Sets previous pointer of current head to new block
