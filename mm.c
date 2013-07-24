@@ -437,7 +437,10 @@ static inline void place(void *bp, size_t asize)
         
         remove_free_block(bp);
         
+        
         bp = NEXT_BLKP(bp);
+        dbg_printf("\n\n begin split block at %p, size %zu\n",bp,asize);
+        
         PUT(HDRP(bp), PACK(csize-asize, 0));
         PUT(FTRP(bp), PACK(csize-asize, 0));
         coalesce(bp);
@@ -530,7 +533,7 @@ static inline void remove_free_block(void *bp)
 		//free_listp = NEXT_FREEP(bp);
         //HEAD_CLASSP(current_class) = NEXT_FREEP(bp);
         dbg_printf("bp have no previous pointer set new head\n");
-        SET_HEAD_CLASSP(bp,current_class);
+        SET_HEAD_CLASSP(NEXT_FREEP(bp),current_class);
 	}
     check_heap(1);
     
