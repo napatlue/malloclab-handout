@@ -5,8 +5,9 @@
  * ID:nluevisa
  * This solution uses segregate free list. Allcoate block consists of header and footer.
  * Free block consist of header, pointer to previosl free block, pointer to next free block and footer.
- * There are MAX_CLASS number of class starting with Class 1, payload of 8 byte size, to Class MAX_CLASS,
- * payload of more than 2^(MAX_CLASS+1). Subsequent class have payload increaing in power of 2
+ * There are MAX_CLASS number of class starting with Class 0, payload of 1-8 byte size, to Class MAX_CLASS,
+ * payload of more than 2^(MAX_CLASS+1). Each class have payload in range of 2^(CLASS INDEX+1) - 2^(CLASS_INDEX+2)
+ * eg. if we have 4 classes, payload range is (class1,class2,class3,class4) = ( 1-8 , 9-16 , 17-32 , >32 )
  * Plolog contain |Header| ptr to class 1| ptr to class 2|...|ptr to class MAX_CLASS|Footer
  */
 #include <assert.h>
@@ -129,8 +130,8 @@ int mm_init(void) {
     {
         return -1;
     }
-    mm_checkheap(1);
-    exit(0);
+    //mm_checkheap(1);
+    //exit(0);
     return 0;
 }
 
