@@ -75,13 +75,17 @@
 
 /* Given free block ptr bp, compute address of next and previous free blocks */
 #define PREV_FREEP(bp)  (*(char **)(bp))
-#define NEXT_FREEP(bp)  (*(char **)(bp + DSIZE)) // possible change to WSIZE
+#define NEXT_FREEP(bp)  (*(char **)(bp + DSIZE))
+
+
 
 
 /* Global variables */
 static char *heap_listp = 0;  /* Pointer to first block */
 static char *free_listp = 0;  /* Pointer to first free block */
 
+//#define CLASSP(class)  (char *)(heap_listp + WSIZE*(class-1)) //pointer to class in prolog
+#define HEAD_CLASSP(bp,class)  (*(char **)(bp + WSIZE*(class-1)))
 
 /* Function prototypes for internal helper routines */
 static inline void *extend_heap(size_t words);
@@ -91,9 +95,40 @@ static inline void *coalesce(void *bp);
 static void print_block(void *bp);
 static void check_heap(int verbose);
 static void check_block(void *bp);
+static void unit_test();
 static inline void insert_free_block(void *bp);
 static inline void remove_free_block(void *bp);
+static inline int find_minimum_class(int asize);
+//static inline void *link_head(int class);
 
+
+/* this function is used for unit test only */
+static void unit_test(){
+    /* test find_minimum_class
+    printf("%d \n",find_minimum_class(3)); //1
+    printf("%d \n",find_minimum_class(8)); //1
+    printf("%d \n",find_minimum_class(12)); //2
+    printf("%d \n",find_minimum_class(18)); //3
+    printf("%d \n",find_minimum_class(32)); //3
+    printf("%d \n",find_minimum_class(36)); //4
+    */
+    
+    // test CLASSP
+    /*
+    printf("%p\n",CLASSP(1));
+    printf("%p\n",CLASSP(2));
+    printf("%p\n",CLASSP(3));
+    */
+    //char *bp;
+    
+    //PUT(0x800000008,0x80000000C);
+    //PUT(0x80000000C,0x800000010);
+    //bp = *(CLASSP(1));
+    //printf("%p\n",bp);
+    //mm_checkheap(1);
+    
+    exit(0);
+}
 
 /*
  * Initialize: return -1 on error, 0 on success.
@@ -131,6 +166,8 @@ int mm_init(void) {
         return -1;
     }
     //mm_checkheap(1);
+    //unit_test();
+    
     //exit(0);
     return 0;
 }
@@ -143,6 +180,8 @@ void *malloc (size_t size) {
     size_t extendsize; /* Amount to extend heap if no fit */
     char *bp;
     
+    
+    
     if (free_listp == 0){ // instantiate free list
         mm_init();
     }
@@ -152,6 +191,8 @@ void *malloc (size_t size) {
     
     /* Adjust block size to include overhead and alignment reqs. */
     asize = MAX(ALIGN(size) + DSIZE, MINIMUM);
+    
+    dbg_printf("Malloc of size %d\n",asize);
     
     /* comment out adjust from implicit version
     if (size <= DSIZE)
@@ -163,16 +204,21 @@ void *malloc (size_t size) {
     
     /* Search the free list for a fit */
     if ((bp = find_fit(asize)) != NULL) {  
-        place(bp, asize);                 
+        place(bp, asize);
+        mm_checkheap(1);
         return bp;
     }
+    
+    dbg_printf("No fit found\n");
     
     /* No fit found. Get more memory and place the block */
     extendsize = MAX(asize,CHUNKSIZE);                 
     if ((bp = extend_heap(extendsize/WSIZE)) == NULL)
         return NULL;                                  
     place(bp, asize);
-    //mm_checkheap(1);
+    
+    mm_checkheap(1);
+    
     return bp;
 }
 
@@ -367,13 +413,33 @@ static inline void *find_fit(size_t asize)
 {
 
     /* First fit search */
-    void *bp;
+    void *bp = NULL;
     
+    int cp = find_minimum_class(asize);
+    
+    
+    for(; cp <= MAX_CLASS; cp++ )
+    {
+         bp = HEAD_CLASSP(heap_listp,cp);
+         if(bp == NULL)
+         {
+             continue;
+         }
+        for (; GET_ALLOC(HDRP(bp)) == 0; bp = NEXT_FREEP(bp)) {
+            //if (asize <= GET_SIZE(HDRP(bp))) {
+                return bp;
+            //}
+        }
+    }
+    
+    // comment out explicit list version
+    /*
     for (bp = free_listp; GET_ALLOC(HDRP(bp)) == 0; bp = NEXT_FREEP(bp)) {
         if (asize <= GET_SIZE(HDRP(bp))) {
             return bp;
         }
     }
+     */
     return NULL; /* No fit */
 
 }
@@ -407,7 +473,7 @@ static inline void remove_free_block(void *bp)
 	}
     else
     {
-		free_listp = NEXT_FREEP(bp);
+		//free_listp = NEXT_FREEP(bp);
 	}
     PREV_FREEP(NEXT_FREEP(bp)) = PREV_FREEP(bp);
 }
@@ -423,7 +489,36 @@ static inline void insert_free_block(void *bp)
 	free_listp = bp; // Sets new block to be start of free list
 }
 
-
+/*
+ * Find minimum class that can allocate for asize
+ */
+static inline int find_minimum_class(int asize)
+{
+    int upper=16,result = 2;
+    int max = (1<<(MAX_CLASS+1));
+    if(asize <= 8)
+    {
+        return 1;
+    }
+    if(asize > max)
+    {
+        return MAX_CLASS;
+    }
+    for (; upper <= max; upper*=2) {
+        if (asize <= upper) {
+            return result;
+        }
+        result++;
+    }
+    return 0;
+}
+/*
+static inline void *link_head(int class){
+    void *bp;
+    bp = *(char **)GET(heap_listp + WSIZE*(class-1));
+    return bp;
+}
+*/
 /*
  * Return whether the pointer is in the heap.
  * May be useful for debugging.
