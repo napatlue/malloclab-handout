@@ -3,8 +3,11 @@
  *
  * Napat Luevisadpaibul
  * ID:nluevisa
- * This solution uses explicit free list. Allcoate block consists of header and footer.
+ * This solution uses segregate free list. Allcoate block consists of header and footer.
  * Free block consist of header, pointer to previosl free block, pointer to next free block and footer.
+ * There are MAX_CLASS number of class starting with Class 1, payload of 8 byte size, to Class MAX_CLASS,
+ * payload of more than 2^(MAX_CLASS+1). Subsequent class have payload increaing in power of 2
+ * Plolog contain |Header| ptr to class 1| ptr to class 2|...|ptr to class MAX_CLASS|Footer
  */
 #include <assert.h>
 #include <stdio.h>
@@ -46,6 +49,7 @@
 #define DSIZE       8       /* Doubleword size (bytes) */
 #define CHUNKSIZE  (1<<12)  /* Extend heap by this amount (bytes) */
 #define MINIMUM     24      /* Minimum block size */
+#define MAX_CLASS   4       /* Maximum number of class */
 
 #define MAX(x, y) ((x) > (y)? (x) : (y))
 
@@ -94,19 +98,26 @@ static inline void remove_free_block(void *bp);
  * Initialize: return -1 on error, 0 on success.
  */
 int mm_init(void) {
+    int i;
+    
     /* Create the initial empty heap */
-    if ((heap_listp = mem_sbrk(2*MINIMUM)) == (void *)-1)
+    if ((heap_listp = mem_sbrk(MAX_CLASS*WSIZE+2*MINIMUM)) == NULL)
         return -1;
     PUT(heap_listp, 0);                          /* Alignment padding */
+    PUT(heap_listp + WSIZE, PACK(MAX_CLASS*WSIZE+2*WSIZE, 1));   /* Prolog Header */
+        
+    for(i=0; i< MAX_CLASS; i++)
+    {
+        //PUT(heap_listp + WSIZE, PACK(MINIMUM, 1));   /* Prolog Header */
+        //PUT(heap_listp + DSIZE, 0);                  /* Prev pointer */
+        //PUT(heap_listp + DSIZE + WSIZE, 0);          /* Next pointer */
+        //PUT(heap_listp + MINIMUM, PACK(MINIMUM, 1)); /* Prologue footer */
+        PUT(heap_listp + DSIZE + WSIZE*i, 0);          /* pointer to start of free block of each class */
+        
+    }
+    PUT(heap_listp + DSIZE + MAX_CLASS*WSIZE, PACK(MAX_CLASS*WSIZE+2*WSIZE, 1));   /* Prolog Footer */
     
-    
-    PUT(heap_listp + WSIZE, PACK(MINIMUM, 1));   /* Prolog Header */
-    PUT(heap_listp + DSIZE, 0);                  /* Prev pointer */
-    PUT(heap_listp + DSIZE + WSIZE, 0);          /* Next pointer */
-    PUT(heap_listp + MINIMUM, PACK(MINIMUM, 1)); /* Prologue footer */
-    
-    
-    PUT(heap_listp + WSIZE + MINIMUM, PACK(0, 1));     /* Epilogue header */
+    PUT(heap_listp + WSIZE + MAX_CLASS*WSIZE+2*WSIZE, PACK(0, 1));     /* Epilogue header */
     
     //heap_listp += (2*WSIZE);
     free_listp = heap_listp + (2*WSIZE);
@@ -115,7 +126,11 @@ int mm_init(void) {
     
     /* Extend the empty heap with a free block of CHUNKSIZE bytes */
     if (extend_heap(CHUNKSIZE/WSIZE) == NULL)
+    {
         return -1;
+    }
+    mm_checkheap(1);
+    exit(0);
     return 0;
 }
 
@@ -515,7 +530,7 @@ void check_heap(int verbose)
         print_block(bp);
     if ((GET_SIZE(HDRP(bp)) != 0) || !(GET_ALLOC(HDRP(bp))))
         printf("Bad epilogue header\n");
-    
+   /*
     dbg_printf("End check entire heap\n");
     
     dbg_printf("Begin print free list\n");
@@ -527,7 +542,7 @@ void check_heap(int verbose)
     }
     
     dbg_printf("End print free list\n");
-    
+    */
     
 }
 
