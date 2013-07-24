@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdint.h>
 
 #include "mm.h"
 #include "memlib.h"
@@ -60,7 +61,7 @@
 /* Read and write a word at address p */
 #define GET(p)       (*(unsigned int *)(p))            
 #define PUT(p, val)  (*(unsigned int *)(p) = (val))    
-
+//#define PUTD(p, val) (*(long *)(p) = (val))
 /* Read the size and allocated fields from address p */
 #define GET_SIZE(p)  (GET(p) & ~0x7)                  
 #define GET_ALLOC(p) (GET(p) & 0x1)                    
@@ -83,9 +84,12 @@
 /* Global variables */
 static char *heap_listp = 0;  /* Pointer to first block */
 static char *free_listp = 0;  /* Pointer to first free block */
+static int current_class = 0;
 
 //#define CLASSP(class)  (char *)(heap_listp + WSIZE*(class-1)) //pointer to class in prolog
-#define HEAD_CLASSP(bp,class)  (*(char **)(bp + WSIZE*(class-1)))
+//#define HEAD_CLASSP(class)  (*(char **)(heap_listp + WSIZE*(class-1)))
+#define SET_HEAD_CLASSP(bp,class) (PUT(heap_listp + WSIZE*(class-1), (size_t)bp))
+
 
 /* Function prototypes for internal helper routines */
 static inline void *extend_heap(size_t words);
@@ -100,6 +104,36 @@ static inline void insert_free_block(void *bp);
 static inline void remove_free_block(void *bp);
 static inline int find_minimum_class(int asize);
 //static inline void *link_head(int class);
+
+static inline void *get_head_classp(int class)
+{
+    /*size_t *address_to_hold_pointer = (size_t *)(heap_listp + WSIZE*(class-2));
+    size_t *head_pointer;
+    dbg_printf("address to hold pointer is %p\n",address_to_hold_pointer);
+    if( *address_to_hold_pointer == 0 )
+    {
+        dbg_printf("address of head ponter is 0");
+        return NULL;
+    }
+    printf("value in that address: %zu\n",*address_to_hold_pointer);
+    
+    head_pointer = (size_t *)(*address_to_hold_pointer);
+
+    //head_pointer = *(unsigned int **)(heap_listp + WSIZE*(class-1));
+    dbg_printf("head pointer is %p\n",head_pointer);
+    */
+    int index = class-1;
+    void *head_pointer = (char *)(intptr_t)GET(heap_listp + (index * WSIZE));
+    if(head_pointer == NULL)
+    {
+        return NULL;
+    }
+    
+    head_pointer = (char *)(intptr_t)((unsigned long)head_pointer + 0x800000000);
+    dbg_printf("head pointer is %p\n",head_pointer);
+    return head_pointer;
+    
+}
 
 
 /* this function is used for unit test only */
@@ -127,7 +161,7 @@ static void unit_test(){
     //printf("%p\n",bp);
     //mm_checkheap(1);
     
-    exit(0);
+    //exit(0);
 }
 
 /*
@@ -158,7 +192,7 @@ int mm_init(void) {
     //heap_listp += (2*WSIZE);
     free_listp = heap_listp + (2*WSIZE);
     
-    heap_listp = free_listp;
+    heap_listp += (2*WSIZE);
     
     /* Extend the empty heap with a free block of CHUNKSIZE bytes */
     if (extend_heap(CHUNKSIZE/WSIZE) == NULL)
@@ -166,7 +200,7 @@ int mm_init(void) {
         return -1;
     }
     //mm_checkheap(1);
-    //unit_test();
+    unit_test();
     
     //exit(0);
     return 0;
@@ -192,7 +226,7 @@ void *malloc (size_t size) {
     /* Adjust block size to include overhead and alignment reqs. */
     asize = MAX(ALIGN(size) + DSIZE, MINIMUM);
     
-    dbg_printf("Malloc of size %d\n",asize);
+    dbg_printf("Malloc of size %zu\n",asize);
     
     /* comment out adjust from implicit version
     if (size <= DSIZE)
@@ -230,7 +264,7 @@ void free (void *ptr) {
     if(ptr == 0)
         return;
     
-    
+    dbg_printf("free %p\n",ptr);
     size_t size = GET_SIZE(HDRP(ptr));
     
     if (free_listp == 0){
@@ -246,10 +280,12 @@ void free (void *ptr) {
 
 static inline void *coalesce(void *bp)
 {
+    
     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp))) || PREV_BLKP(bp) == bp; //possible to remove second clause
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size_t size = GET_SIZE(HDRP(bp));
     
+    dbg_printf("Begin coalesce at %p\n",bp);
 	/* Case 1, coalesce with previous block */
 	if (prev_alloc && !next_alloc)
 	{
@@ -282,9 +318,11 @@ static inline void *coalesce(void *bp)
 	}
     
 	//insert free block at the beginning of free list
+    current_class = find_minimum_class(size);
+    dbg_printf("current class = %d\n",current_class);
     insert_free_block(bp);
     //mm_checkheap(1);
-    
+    dbg_printf("end coalescing\n");
     return bp;
 }
 
@@ -370,13 +408,16 @@ static inline void *extend_heap(size_t words)
         size = MINIMUM;
     
     if ((long)(bp = mem_sbrk(size)) == -1)
-        return NULL;                                        
+        return NULL;
+    
+    dbg_printf("extend_heap of size %zu\n",size);
     
     /* Initialize free block header/footer and the epilogue header */
     PUT(HDRP(bp), PACK(size, 0));         /* Free block header */   
     PUT(FTRP(bp), PACK(size, 0));         /* Free block footer */   
     PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); /* New epilogue header */ 
     
+    check_heap(1);
     /* Coalesce if the previous block was free */
     return coalesce(bp);                                         
 }
@@ -389,7 +430,7 @@ static inline void *extend_heap(size_t words)
 static inline void place(void *bp, size_t asize)
 {
     size_t csize = GET_SIZE(HDRP(bp));
-    
+    dbg_printf("begin place at %p, size %zu\n",bp,asize);
     if ((csize - asize) >= MINIMUM) {
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
@@ -413,21 +454,29 @@ static inline void *find_fit(size_t asize)
 {
 
     /* First fit search */
-    void *bp = NULL;
+    dbg_printf("begin find fit of size %zu\n",asize);
+    void *bp;
     
     int cp = find_minimum_class(asize);
     
+    dbg_printf("minimum class is %d\n",cp);
     
     for(; cp <= MAX_CLASS; cp++ )
     {
-         bp = HEAD_CLASSP(heap_listp,cp);
+         bp = get_head_classp(cp);
+        printf("bp is %p\n",bp);
          if(bp == NULL)
          {
+             dbg_printf("head of class %d is NULL\n",cp);
              continue;
          }
         for (; GET_ALLOC(HDRP(bp)) == 0; bp = NEXT_FREEP(bp)) {
             //if (asize <= GET_SIZE(HDRP(bp))) {
-                return bp;
+            
+            current_class = cp;
+            dbg_printf("Found free blobk in class %d \n with pointer %p\n",cp,bp);
+            dbg_printf("end find fit of size %zu\n",asize);
+            return bp;
             //}
         }
     }
@@ -440,6 +489,8 @@ static inline void *find_fit(size_t asize)
         }
     }
      */
+    current_class = 0;
+    dbg_printf("end find fit of size %zu\n",asize);
     return NULL; /* No fit */
 
 }
@@ -464,6 +515,7 @@ void *calloc (size_t nmemb, size_t size) {
 
 static inline void remove_free_block(void *bp)
 {
+    dbg_printf("Begin remove free block at %p\n",bp);
     /* If there's a previous block, set its next pointer to the next block.
 	 * Otherwise, set this block to be the beginning of free list.
      */
@@ -474,6 +526,8 @@ static inline void remove_free_block(void *bp)
     else
     {
 		//free_listp = NEXT_FREEP(bp);
+        //HEAD_CLASSP(current_class) = NEXT_FREEP(bp);
+        SET_HEAD_CLASSP(bp,current_class);
 	}
     PREV_FREEP(NEXT_FREEP(bp)) = PREV_FREEP(bp);
 }
@@ -483,10 +537,45 @@ static inline void remove_free_block(void *bp)
  */
 static inline void insert_free_block(void *bp)
 {
-	NEXT_FREEP(bp) = free_listp; //Sets next ptr to start of free list
-	PREV_FREEP(free_listp) = bp; //Sets previous pointer of current head to new block
+	/*NEXT_FREEP(bp) = free_listp; //Sets next ptr to start of free list
+    PREV_FREEP(free_listp) = bp; //Sets previous pointer of current head to new block
 	PREV_FREEP(bp) = NULL; // Sets previous pointer to NULL
 	free_listp = bp; // Sets new block to be start of free list
+    */
+    dbg_printf("insert free block :%p \n",bp);
+    dbg_printf("heap list :%p \n",heap_listp);
+    
+    //void *head = HEAD_CLASSP(current_class);
+    //void *head = *(char **)heap_listp + WSIZE*3;
+    //void *head2;
+    //printf("cal address %p\n",heap_listp + WSIZE*3);
+    //head1 = *(char **)(heap_listp + WSIZE*(class-1));
+    //*(char **)(heap_listp + WSIZE*(class-1))
+    
+    void *head = get_head_classp(current_class);
+    
+    
+    check_heap(1);
+    
+    if(head == NULL)
+    {
+        dbg_printf("this class has no head yet, make bp the head of the class\n");
+        
+    }
+    else
+    {
+        dbg_printf("head of class %d is %p \n",current_class,head);
+        NEXT_FREEP(bp) = head; //Sets next ptr to start of free list
+        PREV_FREEP(head) = bp; //Sets previous pointer of current head to new block
+    }
+        
+    
+	PREV_FREEP(bp) = NULL; // Sets previous pointer to NULL
+    SET_HEAD_CLASSP(bp,current_class); // Sets new block to be start of free list
+    
+    mm_checkheap(1);
+    
+    dbg_printf("finish insert free block :%p \n",bp);
 }
 
 /*
@@ -541,13 +630,13 @@ static int aligned(const void *p) {
 static void print_block(void *bp)
 {
     int hsize, halloc, fsize, falloc;
-    
+    int i;
     //checkheap(0);
     hsize = GET_SIZE(HDRP(bp));
     halloc = GET_ALLOC(HDRP(bp));
     fsize = GET_SIZE(FTRP(bp));
     falloc = GET_ALLOC(FTRP(bp));
-    
+    int *p = (int *)bp;
     if (hsize == 0) {
         printf("%p: EOL\n", bp);
         return;
@@ -558,6 +647,12 @@ static void print_block(void *bp)
         printf("%p: header: [%d:%c] footer: [%d:%c]\n", bp,
         hsize, (halloc ? 'a' : 'f'),
         fsize, (falloc ? 'a' : 'f'));
+        
+        dbg_printf("block content :\n");
+        for (i = 0; i < hsize; ++i)
+        {
+            dbg_printf("%p:%#x ", p+i,p[i]);
+        }
     }
     else{
         printf("%p: header: [%d:%c] prev:%p next:%p footer: [%d:%c]\n", bp,
