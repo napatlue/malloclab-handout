@@ -521,15 +521,19 @@ static inline void remove_free_block(void *bp)
      */
 	if (PREV_FREEP(bp))
     {
+        dbg_printf("bp have previous pointer\n");
 		NEXT_FREEP(PREV_FREEP(bp)) = NEXT_FREEP(bp);
+        PREV_FREEP(NEXT_FREEP(bp)) = PREV_FREEP(bp);
 	}
     else
     {
 		//free_listp = NEXT_FREEP(bp);
         //HEAD_CLASSP(current_class) = NEXT_FREEP(bp);
+        dbg_printf("bp have no previous pointer set new head\n");
         SET_HEAD_CLASSP(bp,current_class);
 	}
-    PREV_FREEP(NEXT_FREEP(bp)) = PREV_FREEP(bp);
+    check_heap(1);
+    
 }
 
 /*
